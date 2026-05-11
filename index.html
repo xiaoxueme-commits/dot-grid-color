@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Liquid Dot Grid</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; background: #0a0a0a; overflow: hidden; }
+    canvas { display: block; position: fixed; top: 0; left: 0; width: 100%; height: 100%; cursor: none; }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <script>
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+    const GAP = 13;
+    let W, H, COLS, ROWS, offX, offY, dots;
+
+    function buildGrid() {
+      W = window.innerWidth;
+      H = window.innerHeight;
+      canvas.width = W; canvas.height = H;
+      COLS = Math.ceil(W / GAP) + 2;
+      ROWS = Math.ceil(H / GAP) + 2;
+      offX = (W - (COLS - 1) * GAP) / 2;
+      offY = (H - (ROWS - 1) * GAP) / 2;
+      dots = [];
+      for (let row = 0; row < ROWS; row++)
+        for (let col = 0; col < COLS; col++)
+          dots.push({ col, row, s: 0 });
+    }
+    buildGrid();
+    window.addEventListener('resize', buildGrid);
+
+    function ss(t) { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); }
+    function lerp(a, b, t) { return a + (b - a) * t; }
+
+    const THEMES = [
+      { baseR: 50,  baseG: 50,  baseB: 50,  hiR: 0x83, hiG: 0x72, hiB: 0x64 },
+      { baseR: 20,  baseG: 30,  baseB: 50,  hiR: 0x0D, hiG: 0x75, hiB: 0xFF },
+      { baseR: 50,  baseG: 50,  baseB: 20,  hiR: 0xFF, hiG: 0xFF, hiB: 0x00 },
+      { baseR: 45,  baseG: 45,  baseB: 45,  hiR: 255,  hiG: 255,  hiB: 255  },
+    ];
+
+    let themeIdx = 0;
+    let cur = { ...THEMES[0] };
+    let tgt = { ...THEMES[0] };
+    let lerpT = 1;
+    let holdT = 0;
+    let isDown = false;
+    let downX = 0, downY = 0;
+
+    const TRAIL = 36;
+    const trail = Array.from({ length: TRAIL }, () => ({ x: -9999, y: -9999 }));
+    let tHead = 0;
+    let mouse = { x: -9999, y: -9999, active: false };
+
+    function pushTrail(x, y) { trail[tHead] = { x, y }; tHead = (tHead + 1) % TRAIL; }
+
+    function nextTheme() {
+      themeIdx = (themeIdx + 1) % THEMES.length;
+      tgt = { ...THEMES[themeIdx] };
+      lerpT = 0;
+    }
+
+    window.addEventListener('mousemove', e => {
+      mouse.x = e.clientX; mouse.y = e.clientY;
+      mouse.active = true;
+      pushTrail(e.clientX, e.clientY);
+    });
+    window.addEventListener('mouseleave', () => { mouse.active = false; });
+    window.addEventListener('mousedown', e => {
+      downX = e.clientX; downY = e.clientY;
+      isDown = true;
+    });
+    window.addEventListener('mouseup', () => {
+      nextTheme();
+      isDown = false;
+    });
+    window.addEventListener('touchmove', e => {
+      e.preventDefault();
+      const t = e.touches[0];
+      mouse.x = t.clientX; mouse.y = t.clientY;
+      mouse.active = true;
+      pushTrail(t.clientX, t.clientY);
+    }, { passive: false });
+    window.addEventListener('touchstart', e => {
+      const t = e.touches[0];
+      downX = t.clientX; downY = t.clientY;
+      isDown = true;
+    }, { passive: true });
+    window.addEventListener('touchend', () => {
+      nextTheme();
+      isDown = false; mouse.active = false;
+    });
+
+    const agents = Array.from({ length: 5 }, (_, i) => ({
+      x: Math.random() * window.innerWidth,
+      y: Math.random() * window.innerHeight,
+      baseVx: (Math.random() - .5) * 1.4,
+      baseVy: (Math.random() - .5) * 1.4,
+      vx: 0, vy: 0,
+      r: 140 + Math.random() * 80,
+      phase: i * Math.PI * 2 / 5,
+      orbitSpeed: 0.004 + Math.random() * 0.006,
+      strength: 0.75 + Math.random() * 0.35,
+    }));
+    agents.forEach(a => { a.vx = a.baseVx; a.vy = a.baseVy; });
+
+    function tick() {
+      agents.forEach(a => {
+        a.phase += a.orbitSpeed;
+        a.vx = a.baseVx + Math.cos(a.phase) * 0.6;
+        a.vy = a.baseVy + Math.sin(a.phase) * 0.6;
+        a.x += a.vx; a.y += a.vy;
+        if (a.x < -a.r) { a.x = -a.r; a.baseVx *= -1; }
+        if (a.x > W + a.r) { a.x = W + a.r; a.baseVx *= -1; }
+        if (a.y < -a.r) { a.y = -a.r; a.baseVy *= -1; }
+        if (a.y > H + a.r) { a.y = H + a.r; a.baseVy *= -1; }
+      });
+
+      if (isDown) holdT = Math.min(1, holdT + 0.025);
+      else holdT = Math.max(0, holdT - 0.05);
+
+      const mouseR = 130 + holdT * 260;
+
+      if (lerpT < 1) {
+        lerpT = Math.min(1, lerpT + 0.04);
+        const e = ss(lerpT);
+        cur.baseR = lerp(cur.baseR, tgt.baseR, e);
+        cur.baseG = lerp(cur.baseG, tgt.baseG, e);
+        cur.baseB = lerp(cur.baseB, tgt.baseB, e);
+        cur.hiR = lerp(cur.hiR, tgt.hiR, e);
+        cur.hiG = lerp(cur.hiG, tgt.hiG, e);
+        cur.hiB = lerp(cur.hiB, tgt.hiB, e);
+      }
+
+      const cx = mouse.active ? mouse.x : downX;
+      const cy = mouse.active ? mouse.y : downY;
+
+      dots.forEach(d => {
+        const px = offX + d.col * GAP, py = offY + d.row * GAP;
+        let s = 0;
+        agents.forEach(a => {
+          const dx = px - a.x, dy = py - a.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < a.r) s += ss(1 - dist / a.r) * a.strength;
+        });
+        if (mouse.active || isDown) {
+          let trailS = 0;
+          for (let i = 0; i < TRAIL; i++) {
+            const ti = (tHead - 1 - i + TRAIL) % TRAIL;
+            const tp = trail[ti];
+            if (tp.x === -9999) continue;
+            const decay = ss(1 - i / TRAIL);
+            const dx = px - tp.x, dy = py - tp.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            const r = mouseR * (0.55 + decay * 0.45);
+            if (dist < r) trailS = Math.max(trailS, ss(1 - dist / r) * decay);
+          }
+          if (holdT > 0) {
+            const dx = px - cx, dy = py - cy;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < mouseR) {
+              const holdS = ss(1 - dist / mouseR) * holdT;
+              trailS = Math.max(trailS, holdS);
+            }
+          }
+          s += trailS * 1.25;
+        }
+        s = Math.min(1, s);
+        d.s += (s - d.s) * 0.1;
+      });
+
+      const bgR = Math.round(cur.baseR * 0.25);
+      const bgG = Math.round(cur.baseG * 0.25);
+      const bgB = Math.round(cur.baseB * 0.25);
+      ctx.fillStyle = `rgb(${bgR},${bgG},${bgB})`;
+      ctx.fillRect(0, 0, W, H);
+
+      const BASE = GAP * 0.265;
+      dots.forEach(d => {
+        const s = d.s;
+        const px = offX + d.col * GAP, py = offY + d.row * GAP;
+        const radius = BASE * (0.88 + s * 0.34);
+        const lw = 0.55 + s * 1.2;
+        const r = Math.round(cur.baseR + (cur.hiR - cur.baseR) * s);
+        const g = Math.round(cur.baseG + (cur.hiG - cur.baseG) * s);
+        const b = Math.round(cur.baseB + (cur.hiB - cur.baseB) * s);
+        const al = 0.35 + s * 0.65;
+        ctx.beginPath();
+        ctx.arc(px, py, radius, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(${r},${g},${b},${al.toFixed(3)})`;
+        ctx.lineWidth = lw;
+        ctx.stroke();
+      });
+
+      requestAnimationFrame(tick);
+    }
+    tick();
+  </script>
+</body>
+</html>
